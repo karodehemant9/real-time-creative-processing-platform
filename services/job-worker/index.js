@@ -10,6 +10,12 @@ const logger = require("../../shared/logger");
 
 const bus = require("../../shared/events");
 
+const preview = require("./preview-generator");
+
+const compress = require("./compress-file");
+
+const metadata = require("./get-metadata");
+
 bus.on(
   "processing.started",
 
@@ -35,6 +41,42 @@ bus.on(
 );
 
 bus.on(
+  "preview.generated",
+
+  (payload) => {
+    console.log(
+      "preview.generated",
+
+      payload,
+    );
+  },
+);
+
+bus.on(
+  "compression.completed",
+
+  (payload) => {
+    console.log(
+      "compression.completed",
+
+      payload,
+    );
+  },
+);
+
+bus.on(
+  "metadata.extracted",
+
+  (payload) => {
+    console.log(
+      "metadata.extracted",
+
+      payload,
+    );
+  },
+);
+
+bus.on(
   "processing.completed",
 
   (payload) => {
@@ -52,61 +94,107 @@ new Worker(
   async (job) => {
     const { fileName } = job.data;
 
-    bus.emit(
-      "processing.started",
-
-      {
-        fileName,
-      },
-    );
-
-    const checksum = await new Promise((resolve, reject) => {
-      const worker = new Thread(
-        path.join(
-          __dirname,
-
-          "checksum-thread.js",
-        ),
+    try {
+      bus.emit(
+        "processing.started",
 
         {
-          workerData: {
-            fileName,
-          },
+          fileName,
         },
       );
 
-      worker.on(
-        "message",
+      const checksum = await new Promise((resolve, reject) => {
+        const worker = new Thread(
+          path.join(
+            __dirname,
 
-        resolve,
+            "checksum-thread.js",
+          ),
+
+          {
+            workerData: {
+              fileName,
+            },
+          },
+        );
+
+        worker.on(
+          "message",
+
+          resolve,
+        );
+
+        worker.on(
+          "error",
+
+          reject,
+        );
+      });
+
+      bus.emit(
+        "checksum.generated",
+
+        checksum,
       );
 
-      worker.on(
-        "error",
+      logger.info({
+        message: "Checksum generated",
 
-        reject,
+        checksum,
+      });
+
+      await preview(fileName);
+
+      bus.emit(
+        "preview.generated",
+
+        {
+          fileName,
+        },
       );
-    });
 
-    bus.emit(
-      "checksum.generated",
+      await compress(fileName);
 
-      checksum,
-    );
+      bus.emit(
+        "compression.completed",
 
-    logger.info({
-      message: "Checksum generated",
+        {
+          fileName,
+        },
+      );
 
-      checksum,
-    });
+      const info = metadata(fileName);
 
-    bus.emit(
-      "processing.completed",
+      bus.emit(
+        "metadata.extracted",
 
-      {
+        info,
+      );
+
+      bus.emit(
+        "processing.completed",
+
+        {
+          fileName,
+        },
+      );
+
+      logger.info({
+        message: "Asset processing completed",
+
         fileName,
-      },
-    );
+      });
+    } catch (error) {
+      logger.error({
+        message: "Asset processing failed",
+
+        fileName,
+
+        error: error.message,
+      });
+
+      throw error;
+    }
   },
 
   {
@@ -115,5 +203,7 @@ new Worker(
 
       port: process.env.REDIS_PORT,
     },
+
+    concurrency: 4,
   },
 );
