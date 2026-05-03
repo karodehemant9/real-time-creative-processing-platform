@@ -21,7 +21,9 @@ module.exports = new Queue(
         delay: 2000,
       },
 
-      removeOnComplete: true,
+      removeOnComplete: false,
+
+      removeOnFail: false,
     },
   },
 );

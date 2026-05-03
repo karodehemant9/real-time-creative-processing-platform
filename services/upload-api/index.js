@@ -18,17 +18,7 @@ const queue = require("../../shared/queue");
 
 const logger = require("../../shared/logger");
 
-process.on(
-  "uncaughtException",
-
-  console.error,
-);
-
-process.on(
-  "unhandledRejection",
-
-  console.error,
-);
+const { client } = require("../../shared/metrics");
 
 if (cluster.isPrimary) {
   console.log("Primary:", process.pid);
@@ -40,90 +30,98 @@ if (cluster.isPrimary) {
   cluster.on(
     "exit",
 
-    (worker) => {
-      console.log(`Worker crashed: ${worker.process.pid}`);
-
+    () => {
       cluster.fork();
     },
   );
 } else {
-  (async () => {
-    try {
-      const app = express();
+  const app = express();
 
-      const PORT = Number(process.env.PORT) || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
-      app.post(
-        "/upload",
+  app.get(
+    "/health",
 
-        async (req, res) => {
-          const fileName = crypto.randomUUID() + ".bin";
+    (req, res) => {
+      res.json({
+        status: "UP",
 
-          const filePath = path.join(
-            "uploads",
+        pid: process.pid,
+      });
+    },
+  );
+
+  app.get(
+    "/metrics",
+
+    async (req, res) => {
+      res.set(
+        "Content-Type",
+
+        client.register.contentType,
+      );
+
+      res.end(await client.register.metrics());
+    },
+  );
+
+  app.get(
+    "/memory",
+
+    (req, res) => {
+      res.json(process.memoryUsage());
+    },
+  );
+
+  app.post(
+    "/upload",
+
+    (req, res) => {
+      const fileName = crypto.randomUUID() + ".bin";
+
+      const filePath = path.join(
+        "uploads",
+
+        fileName,
+      );
+
+      const stream = fs.createWriteStream(filePath);
+
+      req.pipe(stream);
+
+      req.on(
+        "end",
+
+        async () => {
+          await queue.add(
+            "asset-processing",
+
+            {
+              fileName,
+            },
+
+            {
+              jobId: fileName,
+            },
+          );
+
+          logger.info({
+            message: "Job queued",
 
             fileName,
-          );
+          });
 
-          const stream = fs.createWriteStream(filePath);
-
-          req.on(
-            "data",
-
-            (chunk) => {
-              logger.info({
-                pid: process.pid,
-
-                chunk: chunk.length,
-              });
-            },
-          );
-
-          req.pipe(stream);
-
-          req.on(
-            "end",
-
-            async () => {
-              await queue.add(
-                "asset-processing",
-
-                {
-                  fileName,
-                },
-
-                {
-                  jobId: fileName,
-                },
-              );
-
-              logger.info({
-                message: "Job queued",
-
-                fileName,
-              });
-
-              res.send("uploaded");
-            },
-          );
-
-          req.on(
-            "error",
-
-            console.error,
-          );
+          res.send("uploaded");
         },
       );
+    },
+  );
 
-      app.listen(
-        PORT,
+  app.listen(
+    PORT,
 
-        () => {
-          console.log(`Worker ${process.pid} listening on ${PORT}`);
-        },
-      );
-    } catch (error) {
-      console.error(error);
-    }
-  })();
+    () => {
+      console.log(`Worker ${process.pid} listening on ${PORT}`);
+    },
+  );
 }

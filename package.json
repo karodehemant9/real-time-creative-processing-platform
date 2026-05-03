@@ -6,17 +6,22 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "api": "node services/upload-api/index.js",
     "api:dev": "nodemon services/upload-api/index.js",
-    "worker": "node services/job-worker/index.js"
+    "worker": "node services/job-worker/index.js",
+    "admin": "node services/admin/index.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@bull-board/api": "^7.0.0",
+    "@bull-board/express": "^7.0.0",
+    "bull-board": "^1.7.2",
     "bullmq": "^5.76.5",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "ioredis": "^5.10.1",
+    "prom-client": "^15.1.3",
     "uuid": "^14.0.0",
     "winston": "^3.19.0"
   },

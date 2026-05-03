@@ -18,17 +18,11 @@ const metadata = require("./get-metadata");
 
 const idempotency = require("./idempotency");
 
-bus.on("processing.started", console.log);
+const {
+  jobsProcessed,
 
-bus.on("checksum.generated", console.log);
-
-bus.on("preview.generated", console.log);
-
-bus.on("compression.completed", console.log);
-
-bus.on("metadata.extracted", console.log);
-
-bus.on("processing.completed", console.log);
+  jobsFailed,
+} = require("../../shared/metrics");
 
 const worker = new Worker(
   "creative-jobs",
@@ -37,12 +31,6 @@ const worker = new Worker(
     const { fileName } = job.data;
 
     if (idempotency.exists(fileName)) {
-      logger.warn({
-        message: "Already processed",
-
-        fileName,
-      });
-
       return;
     }
 
@@ -53,6 +41,14 @@ const worker = new Worker(
         fileName,
       },
     );
+
+    await new Promise((resolve) => {
+      setTimeout(
+        resolve,
+
+        5000,
+      );
+    });
 
     const checksum = await new Promise((resolve, reject) => {
       const thread = new Thread(
@@ -88,58 +84,18 @@ const worker = new Worker(
       checksum,
     );
 
-    await job.updateProgress(25);
-
-    if (Math.random() < 0.3) {
-      throw new Error("Random failure");
-    }
-
     await preview(fileName);
-
-    bus.emit(
-      "preview.generated",
-
-      {
-        fileName,
-      },
-    );
-
-    await job.updateProgress(50);
 
     await compress(fileName);
 
-    bus.emit(
-      "compression.completed",
-
-      {
-        fileName,
-      },
-    );
-
-    await job.updateProgress(75);
-
-    const info = metadata(fileName);
-
-    bus.emit(
-      "metadata.extracted",
-
-      info,
-    );
-
-    await job.updateProgress(100);
+    metadata(fileName);
 
     idempotency.mark(fileName);
 
-    bus.emit(
-      "processing.completed",
-
-      {
-        fileName,
-      },
-    );
+    jobsProcessed.inc();
 
     logger.info({
-      message: "Asset processing completed",
+      message: "Asset processed",
 
       fileName,
     });
@@ -160,10 +116,10 @@ worker.on(
   "failed",
 
   (job, error) => {
+    jobsFailed.inc();
+
     logger.error({
       message: "Job failed",
-
-      jobId: job.id,
 
       error: error.message,
     });
