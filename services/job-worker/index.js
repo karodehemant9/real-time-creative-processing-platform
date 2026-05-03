@@ -19,10 +19,12 @@ const metadata = require("./get-metadata");
 (async () => {
   await connectDB();
 
-  new Worker(
+  const worker = new Worker(
     "creative-jobs",
 
     async (job) => {
+      console.log("JOB RECEIVED:", job.id);
+
       const {
         assetId,
 
@@ -38,7 +40,7 @@ const metadata = require("./get-metadata");
       );
 
       const checksum = await new Promise((resolve, reject) => {
-        const worker = new Thread(
+        const thread = new Thread(
           path.join(
             __dirname,
 
@@ -52,20 +54,20 @@ const metadata = require("./get-metadata");
           },
         );
 
-        worker.on(
+        thread.on(
           "message",
 
           resolve,
         );
 
-        worker.on(
+        thread.on(
           "error",
 
           reject,
         );
       });
 
-      await job.updateProgress(25);
+      console.log("checksum done");
 
       global.io?.emit(
         "progress",
@@ -79,7 +81,7 @@ const metadata = require("./get-metadata");
 
       await preview(fileName);
 
-      await job.updateProgress(50);
+      console.log("preview done");
 
       global.io?.emit(
         "progress",
@@ -92,6 +94,8 @@ const metadata = require("./get-metadata");
       );
 
       await compress(fileName);
+
+      console.log("compression done");
 
       const info = metadata(fileName);
 
@@ -120,6 +124,8 @@ const metadata = require("./get-metadata");
           progress: 100,
         },
       );
+
+      console.log("JOB COMPLETED");
     },
 
     {
@@ -128,8 +134,28 @@ const metadata = require("./get-metadata");
       connection: {
         host: process.env.REDIS_HOST,
 
-        port: process.env.REDIS_PORT,
+        port: Number(process.env.REDIS_PORT),
       },
     },
+  );
+
+  worker.on(
+    "ready",
+
+    () => {
+      console.log("BullMQ worker ready");
+    },
+  );
+
+  worker.on(
+    "error",
+
+    console.error,
+  );
+
+  worker.on(
+    "failed",
+
+    console.error,
   );
 })();

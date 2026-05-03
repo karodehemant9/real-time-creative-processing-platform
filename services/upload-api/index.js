@@ -6,6 +6,8 @@ const os = require("os");
 
 const express = require("express");
 
+const cors = require("cors");
+
 const http = require("http");
 
 const { Server } = require("socket.io");
@@ -32,13 +34,27 @@ if (cluster.isPrimary) {
 
     const app = express();
 
-    const server = http.createServer(app);
-
-    const io = new Server(server);
-
-    global.io = io;
+    app.use(
+      cors({
+        origin: "*",
+      }),
+    );
 
     app.use(express.json());
+
+    const server = http.createServer(app);
+
+    const io = new Server(
+      server,
+
+      {
+        cors: {
+          origin: "*",
+        },
+      },
+    );
+
+    global.io = io;
 
     app.post(
       "/upload",
@@ -88,7 +104,13 @@ if (cluster.isPrimary) {
       "/assets",
 
       async (req, res) => {
-        res.json(await Asset.find());
+        const assets = await Asset.find()
+
+          .sort({
+            createdAt: -1,
+          });
+
+        res.json(assets);
       },
     );
 
@@ -114,7 +136,7 @@ if (cluster.isPrimary) {
       3000,
 
       () => {
-        console.log("API started");
+        console.log(`API ${process.pid}`);
       },
     );
   })();
