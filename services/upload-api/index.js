@@ -2,11 +2,13 @@ require("dotenv").config();
 
 const cluster = require("cluster");
 
-cluster.schedulingPolicy = cluster.SCHED_RR;
-
 const os = require("os");
 
 const express = require("express");
+
+const http = require("http");
+
+const { Server } = require("socket.io");
 
 const fs = require("fs");
 
@@ -16,112 +18,104 @@ const crypto = require("crypto");
 
 const queue = require("../../shared/queue");
 
-const logger = require("../../shared/logger");
+const connectDB = require("../../shared/db");
 
-const { client } = require("../../shared/metrics");
+const Asset = require("../../shared/db/asset-model");
 
 if (cluster.isPrimary) {
-  console.log("Primary:", process.pid);
-
   for (let i = 0; i < os.cpus().length; i++) {
     cluster.fork();
   }
-
-  cluster.on(
-    "exit",
-
-    () => {
-      cluster.fork();
-    },
-  );
 } else {
-  const app = express();
+  (async () => {
+    await connectDB();
 
-  const PORT = Number(process.env.PORT) || 3000;
+    const app = express();
 
-  app.get(
-    "/health",
+    const server = http.createServer(app);
 
-    (req, res) => {
-      res.json({
-        status: "UP",
+    const io = new Server(server);
 
-        pid: process.pid,
-      });
-    },
-  );
+    global.io = io;
 
-  app.get(
-    "/metrics",
+    app.use(express.json());
 
-    async (req, res) => {
-      res.set(
-        "Content-Type",
+    app.post(
+      "/upload",
 
-        client.register.contentType,
-      );
+      async (req, res) => {
+        const fileName = crypto.randomUUID() + ".bin";
 
-      res.end(await client.register.metrics());
-    },
-  );
+        const filePath = path.join(
+          "uploads",
 
-  app.get(
-    "/memory",
+          fileName,
+        );
 
-    (req, res) => {
-      res.json(process.memoryUsage());
-    },
-  );
+        const stream = fs.createWriteStream(filePath);
 
-  app.post(
-    "/upload",
+        req.pipe(stream);
 
-    (req, res) => {
-      const fileName = crypto.randomUUID() + ".bin";
+        req.on(
+          "end",
 
-      const filePath = path.join(
-        "uploads",
-
-        fileName,
-      );
-
-      const stream = fs.createWriteStream(filePath);
-
-      req.pipe(stream);
-
-      req.on(
-        "end",
-
-        async () => {
-          await queue.add(
-            "asset-processing",
-
-            {
+          async () => {
+            const asset = await Asset.create({
               fileName,
-            },
 
-            {
-              jobId: fileName,
-            },
-          );
+              status: "queued",
+            });
 
-          logger.info({
-            message: "Job queued",
+            await queue.add(
+              "asset-processing",
 
-            fileName,
-          });
+              {
+                assetId: asset.id,
 
-          res.send("uploaded");
-        },
-      );
-    },
-  );
+                fileName,
+              },
+            );
 
-  app.listen(
-    PORT,
+            res.json({
+              assetId: asset.id,
+            });
+          },
+        );
+      },
+    );
 
-    () => {
-      console.log(`Worker ${process.pid} listening on ${PORT}`);
-    },
-  );
+    app.get(
+      "/assets",
+
+      async (req, res) => {
+        res.json(await Asset.find());
+      },
+    );
+
+    app.get(
+      "/assets/:id",
+
+      async (req, res) => {
+        res.json(await Asset.findById(req.params.id));
+      },
+    );
+
+    app.delete(
+      "/assets/:id",
+
+      async (req, res) => {
+        await Asset.findByIdAndDelete(req.params.id);
+
+        res.send("deleted");
+      },
+    );
+
+    server.listen(
+      3000,
+
+      () => {
+        console.log("API started");
+      },
+    );
+  })();
 }

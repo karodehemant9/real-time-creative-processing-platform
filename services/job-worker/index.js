@@ -6,9 +6,9 @@ const { Worker: Thread } = require("worker_threads");
 
 const path = require("path");
 
-const logger = require("../../shared/logger");
+const connectDB = require("../../shared/db");
 
-const bus = require("../../shared/events");
+const Asset = require("../../shared/db/asset-model");
 
 const preview = require("./preview-generator");
 
@@ -16,126 +16,120 @@ const compress = require("./compress-file");
 
 const metadata = require("./get-metadata");
 
-const idempotency = require("./idempotency");
+(async () => {
+  await connectDB();
 
-const {
-  jobsProcessed,
+  new Worker(
+    "creative-jobs",
 
-  jobsFailed,
-} = require("../../shared/metrics");
+    async (job) => {
+      const {
+        assetId,
 
-const worker = new Worker(
-  "creative-jobs",
-
-  async (job) => {
-    const { fileName } = job.data;
-
-    if (idempotency.exists(fileName)) {
-      return;
-    }
-
-    bus.emit(
-      "processing.started",
-
-      {
         fileName,
-      },
-    );
+      } = job.data;
 
-    await new Promise((resolve) => {
-      setTimeout(
-        resolve,
-
-        5000,
-      );
-    });
-
-    const checksum = await new Promise((resolve, reject) => {
-      const thread = new Thread(
-        path.join(
-          __dirname,
-
-          "checksum-thread.js",
-        ),
+      await Asset.findByIdAndUpdate(
+        assetId,
 
         {
-          workerData: {
-            fileName,
-          },
+          status: "processing",
         },
       );
 
-      thread.on(
-        "message",
+      const checksum = await new Promise((resolve, reject) => {
+        const worker = new Thread(
+          path.join(
+            __dirname,
 
-        resolve,
+            "checksum-thread.js",
+          ),
+
+          {
+            workerData: {
+              fileName,
+            },
+          },
+        );
+
+        worker.on(
+          "message",
+
+          resolve,
+        );
+
+        worker.on(
+          "error",
+
+          reject,
+        );
+      });
+
+      await job.updateProgress(25);
+
+      global.io?.emit(
+        "progress",
+
+        {
+          assetId,
+
+          progress: 25,
+        },
       );
 
-      thread.on(
-        "error",
+      await preview(fileName);
 
-        reject,
+      await job.updateProgress(50);
+
+      global.io?.emit(
+        "progress",
+
+        {
+          assetId,
+
+          progress: 50,
+        },
       );
-    });
 
-    bus.emit(
-      "checksum.generated",
+      await compress(fileName);
 
-      checksum,
-    );
+      const info = metadata(fileName);
 
-    await preview(fileName);
+      await Asset.findByIdAndUpdate(
+        assetId,
 
-    await compress(fileName);
+        {
+          checksum: checksum.checksum,
 
-    metadata(fileName);
+          size: info.size,
 
-    idempotency.mark(fileName);
+          status: "completed",
 
-    jobsProcessed.inc();
+          previewPath: `previews/${fileName}`,
 
-    logger.info({
-      message: "Asset processed",
+          compressedPath: `compressed/${fileName}.gz`,
+        },
+      );
 
-      fileName,
-    });
-  },
+      global.io?.emit(
+        "progress",
 
-  {
-    concurrency: 4,
+        {
+          assetId,
 
-    connection: {
-      host: process.env.REDIS_HOST,
-
-      port: process.env.REDIS_PORT,
+          progress: 100,
+        },
+      );
     },
-  },
-);
 
-worker.on(
-  "failed",
+    {
+      concurrency: 4,
 
-  (job, error) => {
-    jobsFailed.inc();
+      connection: {
+        host: process.env.REDIS_HOST,
 
-    logger.error({
-      message: "Job failed",
-
-      error: error.message,
-    });
-  },
-);
-
-process.on(
-  "SIGINT",
-
-  async () => {
-    logger.info({
-      message: "Graceful shutdown",
-    });
-
-    await worker.close();
-
-    process.exit(0);
-  },
-);
+        port: process.env.REDIS_PORT,
+      },
+    },
+  );
+})();
