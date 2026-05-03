@@ -51,10 +51,12 @@ if (cluster.isPrimary) {
     try {
       const app = express();
 
+      const PORT = Number(process.env.PORT) || 3000;
+
       app.post(
         "/upload",
 
-        (req, res) => {
+        async (req, res) => {
           const fileName = crypto.randomUUID() + ".bin";
 
           const filePath = path.join(
@@ -89,6 +91,10 @@ if (cluster.isPrimary) {
                 {
                   fileName,
                 },
+
+                {
+                  jobId: fileName,
+                },
               );
 
               logger.info({
@@ -100,22 +106,20 @@ if (cluster.isPrimary) {
               res.send("uploaded");
             },
           );
+
+          req.on(
+            "error",
+
+            console.error,
+          );
         },
       );
-
-      console.log(
-        "Before listen:",
-
-        process.pid,
-      );
-
-      const PORT = Number(process.env.PORT) || 3000;
 
       app.listen(
         PORT,
 
         () => {
-          console.log(`Worker listening: ${process.pid}`);
+          console.log(`Worker ${process.pid} listening on ${PORT}`);
         },
       );
     } catch (error) {

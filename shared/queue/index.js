@@ -11,5 +11,17 @@ module.exports = new Queue(
 
       port: process.env.REDIS_PORT,
     },
+
+    defaultJobOptions: {
+      attempts: 3,
+
+      backoff: {
+        type: "exponential",
+
+        delay: 2000,
+      },
+
+      removeOnComplete: true,
+    },
   },
 );
